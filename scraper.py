@@ -50,12 +50,12 @@ def main():
     
     url = "https://jsearch.p.rapidapi.com/search"
     
-    # Menggunakan parameter yang Anda temukan, dioptimasi untuk target DaaS kita
+    # Query diperluas ke semua sektor pekerjaan di Indonesia
     querystring = {
-        "query": "remote developer IT jobs in Indonesia",
+        "query": "lowongan kerja terbaru di Indonesia",
         "page": "1",
         "num_pages": "1",
-        "date_posted": "today" # Hanya ambil loker yang di-posting hari ini
+        "date_posted": "week" # Mengambil yang terbaru dalam seminggu
     }
     
     headers = {

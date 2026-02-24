@@ -1,0 +1,32 @@
+name: Harian - Indo Tech Jobs Scraper
+
+on:
+  schedule:
+    # Berjalan setiap jam 20:00 UTC (Setara jam 03:00 Pagi WIB)
+    - cron: '0 20 * * *'
+  workflow_dispatch: # Mengizinkan trigger manual melalui tombol di GitHub
+
+jobs:
+  scrape_and_process:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Jalankan AI Scraper
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          python scraper.py

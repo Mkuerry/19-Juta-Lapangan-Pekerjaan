@@ -1,103 +1,117 @@
 import os
 import json
-import feedparser
+import httpx
 from bs4 import BeautifulSoup
-import google.generativeai as genai
 from supabase import create_client, Client
 
-# 1. Konfigurasi Environment Variables (Nanti diset di GitHub Secrets)
+# 1. Konfigurasi Environment Variables
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-# Inisiasi Client
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-genai.configure(api_key=GEMINI_API_KEY)
-
-# Menggunakan model Gemini 1.5 Flash (Sangat cepat dan gratis)
-model = genai.GenerativeModel('gemini-3-flash-preview')
-
-def bersihkan_html(raw_html):
-    soup = BeautifulSoup(raw_html, "html.parser")
-    return soup.get_text(separator=" ", strip=True)
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={GEMINI_API_KEY}"
 
 def ekstrak_data_dengan_ai(teks_lowongan):
-    """
-    PROMPT ENGINEERING DETAIL:
-    Ini adalah kunci dari sistem Data-as-a-Service Anda.
-    AI dipaksa menjadi sistem ekstraksi data yang outputnya hanya JSON.
-    """
     prompt = f"""
-    Kamu adalah spesialis HR dan Data Engineer untuk pasar teknologi di Indonesia.
-    Tugasmu adalah menganalisis deskripsi pekerjaan mentah berikut dan mengekstrak informasinya menjadi format JSON murni.
+    Kamu adalah HR dan Data Engineer spesialis pasar teknologi di Indonesia.
+    Tugasmu menganalisis deskripsi pekerjaan mentah dari portal loker Indonesia dan mengekstraknya ke format JSON.
     
     Aturan wajib:
-    1. Output HANYA boleh berupa objek JSON yang valid tanpa markdown (```json ... ```) atau teks pengantar apapun.
-    2. Terjemahkan konsep atau tipe pekerjaan ke dalam bahasa Indonesia (misal: "Full-time" -> "Penuh Waktu").
-    3. Jika tidak ada informasi eksplisit, tulis "Tidak disebutkan".
+    1. Output HANYA objek JSON valid tanpa markdown (tanpa ```json ```) atau teks lain.
+    2. Jika tidak ada informasi eksplisit, tulis "Tidak disebutkan".
     
-    Format JSON yang diharapkan:
+    Format JSON:
     {{
         "judul_pekerjaan": "...",
         "perusahaan": "...",
-        "lokasi": "...", (Contoh: Jakarta, Remote Indonesia, Bandung, dll)
-        "estimasi_gaji": "...", (Jika ada mata uang asing, biarkan aslinya. Jika tidak ada, tulis "Sesuai standar perusahaan")
-        "tech_stack": ["React", "Python", "AWS"], (Array string, maksimal 5 skill utama)
-        "tipe_pekerjaan": "..."
+        "lokasi": "...", (Contoh: Jakarta, Bandung, Remote, dll)
+        "estimasi_gaji": "...",
+        "tech_stack": ["React", "PHP", "Laravel"], (Array string, maksimal 5 skill utama)
+        "tipe_pekerjaan": "..." (Full-time, Magang, Part-time)
     }}
 
-    Deskripsi Pekerjaan Mentah:
+    Deskripsi Mentah:
     {teks_lowongan}
     """
     
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.1}
+    }
+    headers = {"Content-Type": "application/json"}
+    
     try:
-        response = model.generate_content(prompt)
-        # Membersihkan output jika AI bandel memberikan markdown
-        hasil_teks = response.text.replace('```json', '').replace('```', '').strip()
+        response = httpx.post(GEMINI_URL, json=payload, headers=headers, timeout=30.0)
+        response.raise_for_status() 
+        data = response.json()
+        hasil_teks = data["candidates"][0]["content"]["parts"][0]["text"]
+        
+        hasil_teks = hasil_teks.replace('```json', '').replace('```', '').strip()
         return json.loads(hasil_teks)
     except Exception as e:
         print(f"Error AI Processing: {e}")
         return None
 
 def main():
-    print("Memulai proses scraping data...")
+    print("Memulai proses scraping loker lokal (Indonesia)...")
     
-    # Contoh Sumber: RSS Job Board Remote (Anda bisa menggantinya dengan RSS lokal jika ada)
-    # Sistem ini akan memfilter/mengonversi yang relevan lewat AI
-    rss_url = "https://weworkremotely.com/categories/remote-programming-jobs.rss"
-    feed = feedparser.parse(rss_url)
+    # Target URL: Loker.id kategori Information Technology
+    target_url = "https://www.loker.id/kategori/information-technology"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36"
+    }
     
+    try:
+        response = httpx.get(target_url, headers=headers, timeout=15.0)
+        soup = BeautifulSoup(response.text, "html.parser")
+    except Exception as e:
+        print(f"Gagal mengakses website sumber: {e}")
+        return
+
+    # Loker.id biasanya menyimpan judul kerja di tag <h3>
     pekerjaan_baru = 0
+    job_cards = soup.find_all("h3", limit=10) # Ambil 10 teratas
     
-    # Ambil 10 data terbaru saja setiap jalan agar tidak kena limit gratisan
-    for entry in feed.entries[:10]:
-        link = entry.link
-        
-        # Cek apakah data sudah ada di database (Mencegah duplikasi)
-        cek_db = supabase.table("indo_tech_jobs").select("id").eq("url_sumber", link).execute()
-        if len(cek_db.data) > 0:
-            print(f"Lewati: {link} (Sudah ada di database)")
+    for card in job_cards:
+        link_tag = card.find("a")
+        if not link_tag:
             continue
             
-        print(f"Memproses: {entry.title}")
-        deskripsi_bersih = bersihkan_html(entry.description)
+        link = link_tag.get("href")
+        judul_mentah = link_tag.get_text(strip=True)
         
-        # Proses ke AI
-        data_json = ekstrak_data_dengan_ai(entry.title + " " + deskripsi_bersih)
+        # Cek Database agar tidak duplikat
+        cek_db = supabase.table("indo_tech_jobs").select("id").eq("url_sumber", link).execute()
+        if len(cek_db.data) > 0:
+            print(f"Lewati: {judul_mentah[:30]}... (Sudah ada di database)")
+            continue
+            
+        print(f"Memproses: {judul_mentah}")
+        
+        # Masuk ke halaman detail untuk mengambil deskripsi lengkap
+        try:
+            detail_res = httpx.get(link, headers=headers, timeout=15.0)
+            detail_soup = BeautifulSoup(detail_res.text, "html.parser")
+            # Mengambil seluruh teks di halaman, dipotong agar tidak terlalu panjang untuk AI
+            deskripsi_bersih = detail_soup.get_text(separator="\n", strip=True)[:3000] 
+        except:
+            deskripsi_bersih = judul_mentah # Jika gagal masuk, gunakan judulnya saja
+
+        # Eksekusi AI
+        teks_gabungan = f"Judul: {judul_mentah}\n\nDeskripsi:\n{deskripsi_bersih}"
+        data_json = ekstrak_data_dengan_ai(teks_gabungan)
         
         if data_json:
-            # Tambahkan URL ke data sebelum dimasukkan ke database
             data_json["url_sumber"] = link
-            
-            # Insert ke Supabase
             try:
                 supabase.table("indo_tech_jobs").insert(data_json).execute()
-                print(f"Sukses disimpan: {data_json['judul_pekerjaan']}")
+                print(f"✅ Sukses disimpan: {data_json['judul_pekerjaan']} di {data_json.get('lokasi', 'Indonesia')}")
                 pekerjaan_baru += 1
             except Exception as e:
-                print(f"Gagal simpan ke DB: {e}")
+                print(f"❌ Gagal simpan ke DB: {e}")
                 
-    print(f"Selesai! {pekerjaan_baru} pekerjaan baru berhasil ditambahkan ke database.")
+    print(f"Selesai! {pekerjaan_baru} loker lokal baru berhasil ditambahkan.")
 
 if __name__ == "__main__":
     main()

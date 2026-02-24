@@ -15,7 +15,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 genai.configure(api_key=GEMINI_API_KEY)
 
 # Menggunakan model Gemini 1.5 Flash (Sangat cepat dan gratis)
-model = genai.GenerativeModel('gemini-1.5-flash')
+model = genai.GenerativeModel('gemini-3-flash-preview')
 
 def bersihkan_html(raw_html):
     soup = BeautifulSoup(raw_html, "html.parser")

@@ -4,7 +4,7 @@ import httpx
 import time
 from supabase import create_client, Client
 
-# Konfigurasi Environment Variables
+# Konfigurasi Environment Variables (Aman di GitHub Secrets)
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
@@ -49,12 +49,18 @@ def main():
     print("Mencari lowongan Google Jobs via JSearch (RapidAPI)...")
     
     url = "https://jsearch.p.rapidapi.com/search"
-    # Query sangat spesifik untuk mencari loker IT Remote di Indonesia
-    querystring = {"query": "remote IT jobs in Indonesia", "page": "1", "num_pages": "1"}
+    
+    # Menggunakan parameter yang Anda temukan, dioptimasi untuk target DaaS kita
+    querystring = {
+        "query": "remote developer IT jobs in Indonesia",
+        "page": "1",
+        "num_pages": "1",
+        "date_posted": "today" # Hanya ambil loker yang di-posting hari ini
+    }
     
     headers = {
-        "X-RapidAPI-Key": RAPIDAPI_KEY,
-        "X-RapidAPI-Host": "jsearch.p.rapidapi.com"
+        "x-rapidapi-key": RAPIDAPI_KEY,
+        "x-rapidapi-host": "jsearch.p.rapidapi.com"
     }
     
     try:
@@ -68,13 +74,10 @@ def main():
 
     pekerjaan_baru = 0
     
-    # Proses 10 pekerjaan teratas
-    for job in jobs_data[:10]:
+    for job in jobs_data:
         judul = job.get("job_title", "")
         perusahaan = job.get("employer_name", "")
         link = job.get("job_apply_link", "")
-        
-        # Bersihkan deskripsi yang terlalu panjang untuk AI
         deskripsi = job.get("job_description", "")[:1500] 
         
         if not link:
@@ -99,7 +102,6 @@ def main():
             except Exception as e:
                 print(f"❌ DATABASE ERROR: {e}")
         
-        # Jeda krusial
         time.sleep(3)
                 
     print(f"\nSelesai! {pekerjaan_baru} loker Google Jobs berhasil ditambahkan.")

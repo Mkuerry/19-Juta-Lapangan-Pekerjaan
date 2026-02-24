@@ -65,36 +65,47 @@ def ambil_dari_remotive():
         for job in res.json().get("jobs", []):
             if "worldwide" in job.get("candidate_required_location", "").lower():
                 pekerjaan.append({
-                    "judul": job.get("title"),
-                    "perusahaan": job.get("company_name"),
-                    "link": job.get("url"),
+                    "judul": job.get("title", ""),
+                    "perusahaan": job.get("company_name", ""),
+                    "link": job.get("url", ""),
                     "deskripsi_mentah": job.get("description", "")[:1500]
                 })
     except Exception as e:
         print(f"Gagal Remotive: {e}")
     return pekerjaan
 
-def ambil_dari_arbeitnow():
-    print("\n--- Menarik data dari Arbeitnow API ---")
-    url = "https://www.arbeitnow.com/api/job-board-api"
+def ambil_dari_joinrise():
+    print("\n--- Menarik data dari JoinRise API ---")
+    # Kita ubah limit=5 saja agar tidak membebani API Gemini harian Anda
+    url = "https://api.joinrise.io/api/v1/jobs/public?limit=5&sortedBy=createdAt&sort=des&page=1"
     pekerjaan = []
     try:
         res = httpx.get(url, timeout=15.0)
-        # Ambil 5 data teratas saja per hari
-        for job in res.json().get("data", [])[:5]:
-            if job.get("remote"): # Hanya ambil yang remote
-                # Membersihkan HTML bawaan Arbeitnow
-                soup = BeautifulSoup(job.get("description", ""), "html.parser")
-                deskripsi_bersih = soup.get_text(separator=" ", strip=True)[:1500]
+        data_json = res.json()
+        
+        # JoinRise biasanya menaruh list pekerjaannya di dalam key 'data' atau 'items'
+        jobs_list = data_json.get("data", data_json.get("items", [])) if isinstance(data_json, dict) else []
+        
+        for job in jobs_list:
+            # Menggunakan .get() bertingkat untuk berjaga-jaga jika struktur JSON mereka berubah
+            judul = job.get("title", "Posisi Tidak Diketahui")
+            perusahaan = job.get("companyName", job.get("company", {}).get("name", "Perusahaan Rahasia"))
+            link = job.get("applyUrl", job.get("url", f"https://joinrise.io/jobs/{job.get('id', '')}"))
+            
+            # Membersihkan HTML jika deskripsinya mengandung tag HTML
+            deskripsi_mentah = job.get("description", "")
+            if "<" in deskripsi_mentah and ">" in deskripsi_mentah:
+                soup = BeautifulSoup(deskripsi_mentah, "html.parser")
+                deskripsi_mentah = soup.get_text(separator=" ", strip=True)
                 
-                pekerjaan.append({
-                    "judul": job.get("title"),
-                    "perusahaan": job.get("company_name"),
-                    "link": job.get("url"),
-                    "deskripsi_mentah": deskripsi_bersih
-                })
+            pekerjaan.append({
+                "judul": judul,
+                "perusahaan": perusahaan,
+                "link": link,
+                "deskripsi_mentah": deskripsi_mentah[:1500]
+            })
     except Exception as e:
-        print(f"Gagal Arbeitnow: {e}")
+        print(f"Gagal JoinRise: {e}")
     return pekerjaan
 
 def main():
@@ -103,40 +114,7 @@ def main():
     # Kumpulkan semua data dari berbagai sumber ke dalam satu antrean (Queue)
     antrean_pekerjaan = []
     antrean_pekerjaan.extend(ambil_dari_remotive())
-    antrean_pekerjaan.extend(ambil_dari_arbeitnow())
+    antrean_pekerjaan.extend(ambil_dari_joinrise())  # <--- JoinRise dimasukkan ke antrean!
     
     print(f"\nTotal pekerjaan mentah terkumpul: {len(antrean_pekerjaan)}")
     pekerjaan_baru = 0
-    
-    # Proses antrean satu per satu
-    for job in antrean_pekerjaan:
-        link = job["link"]
-        judul = job["judul"]
-        
-        # Cek Database agar tidak duplikat
-        cek_db = supabase.table("indo_tech_jobs").select("id").eq("url_sumber", link).execute()
-        if len(cek_db.data) > 0:
-            print(f"Lewati: {judul} (Sudah ada di DB)")
-            continue
-            
-        print(f"🤖 Memproses AI: {judul}")
-        teks_gabungan = f"Judul: {judul}\nPerusahaan: {job['perusahaan']}\nDeskripsi: {job['deskripsi_mentah']}"
-        
-        data_json = ekstrak_dan_terjemahkan_dengan_ai(teks_gabungan)
-        
-        if data_json:
-            data_json["url_sumber"] = link
-            try:
-                supabase.table("indo_tech_jobs").insert(data_json).execute()
-                print(f"✅ Tersimpan: {data_json['judul_pekerjaan']}")
-                pekerjaan_baru += 1
-            except Exception as e:
-                print(f"❌ Gagal simpan: {e}")
-        
-        # Jeda 3 detik agar Google Gemini API tidak memblokir kita karena terlalu banyak request (Rate Limiting)
-        time.sleep(3)
-                
-    print(f"\nSelesai! {pekerjaan_baru} loker baru berhasil ditambahkan dari berbagai sumber.")
-
-if __name__ == "__main__":
-    main()
